@@ -744,6 +744,7 @@ const TransactionForm = ({ onSuccess, initialData = null, onCancel = null, onFil
 };
 
 // ▼ 新規追加: スキャナーコンポーネント
+// ▼ 新規追加: スキャナーコンポーネント (修正版)
 const ReceiptScanner = ({ onSave, onCancel }) => {
     const videoRef = useRef(null);
     const canvasRef = useRef(null);
@@ -754,38 +755,76 @@ const ReceiptScanner = ({ onSave, onCancel }) => {
     const [imageSrc, setImageSrc] = useState(null);
 
     // Crop State
-    const [cropRect, setCropRect] = useState(null); // {x, y, w, h}
+    const [cropRect, setCropRect] = useState(null);
     const [isDragging, setIsDragging] = useState(false);
     const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
 
     // 1. カメラ初期化
     useEffect(() => {
         if (mode === 'camera') {
-            navigator.mediaDevices.enumerateDevices().then(devs => {
-                const videoDevs = devs.filter(d => d.kind === 'videoinput');
-                setDevices(videoDevs);
-                if (videoDevs.length > 0 && !selectedDeviceId) {
-                    setSelectedDeviceId(videoDevs[0].deviceId);
-                }
-            });
+            // 初回マウント時、まずデフォルトカメラでストリームを開始して権限を得る
+            // これにより連係カメラ(iPhone)等がリストアップされるようになる
+            startStream(selectedDeviceId || null);
+
+            // デバイスの接続変更（iPhoneのスリープ復帰など）を監視
+            navigator.mediaDevices.addEventListener('devicechange', refreshDeviceList);
         }
-        return () => stopStream();
+
+        return () => {
+            stopStream();
+            navigator.mediaDevices.removeEventListener('devicechange', refreshDeviceList);
+        };
     }, [mode]);
 
-    useEffect(() => {
-        if (mode === 'camera' && selectedDeviceId) {
-            startStream(selectedDeviceId);
-        }
-    }, [selectedDeviceId, mode]);
+    // デバイスリストの更新処理
+    const refreshDeviceList = () => {
+        navigator.mediaDevices.enumerateDevices().then(devs => {
+            const videoDevs = devs.filter(d => d.kind === 'videoinput');
+            setDevices(videoDevs);
+        });
+    };
 
     const startStream = (deviceId) => {
         stopStream();
-        navigator.mediaDevices.getUserMedia({
-            video: { deviceId: { exact: deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } }
-        }).then(s => {
+
+        const constraints = {
+            video: {
+                width: { ideal: 1920 },
+                height: { ideal: 1080 }
+            }
+        };
+
+        // ID指定がある場合のみ設定
+        if (deviceId) {
+            constraints.video.deviceId = { exact: deviceId };
+        }
+
+        navigator.mediaDevices.getUserMedia(constraints).then(s => {
             setStream(s);
             if (videoRef.current) videoRef.current.srcObject = s;
-        }).catch(err => console.error("Camera Error:", err));
+
+            // ストリーム取得成功後にデバイスリストを更新（ここでiPhone名が取得できる）
+            navigator.mediaDevices.enumerateDevices().then(devs => {
+                const videoDevs = devs.filter(d => d.kind === 'videoinput');
+                setDevices(videoDevs);
+
+                // 初回起動時などID未指定の場合、実際に使われたIDをセット
+                if (!deviceId) {
+                    const track = s.getVideoTracks()[0];
+                    const currentId = track.getSettings().deviceId;
+                    if (currentId) setSelectedDeviceId(currentId);
+                }
+            });
+        }).catch(err => {
+            console.error("Camera Error:", err);
+            // エラー時もリスト取得だけは試みる（以前の許可がある場合のため）
+            refreshDeviceList();
+        });
+    };
+
+    const handleDeviceChange = (newDeviceId) => {
+        setSelectedDeviceId(newDeviceId);
+        startStream(newDeviceId);
     };
 
     const stopStream = () => {
@@ -804,12 +843,9 @@ const ReceiptScanner = ({ onSave, onCancel }) => {
         setImageSrc(canvas.toDataURL('image/jpeg'));
         setMode('crop');
         stopStream();
-        // 初期クロップ範囲（全体）
         setCropRect({ x: 50, y: 50, w: canvas.width - 100, h: canvas.height - 100 });
     };
 
-    // 2. クロップロジック
-    // 画像がロードされたらCanvasに描画
     useEffect(() => {
         if (mode === 'crop' && imageSrc && canvasRef.current) {
             drawCanvas();
@@ -823,31 +859,20 @@ const ReceiptScanner = ({ onSave, onCancel }) => {
         const img = new Image();
         img.src = imageSrc;
         img.onload = () => {
-            canvas.width = 600; // 表示幅固定
+            canvas.width = 600;
             const scale = 600 / img.width;
             canvas.height = img.height * scale;
 
-            // 画像描画
             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-            // 暗いオーバーレイ
             ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            // クロップエリアのクリア（明るくする）
             if (cropRect) {
-                // 表示用スケール変換
-                // cropRectは元の画像座標系で管理する想定だが、
-                // 簡易化のためここでは「表示座標系」で管理し、保存時に変換する方がUI実装が楽。
-                // 今回は「表示座標系」でstate管理します。
-
                 ctx.clearRect(cropRect.x, cropRect.y, cropRect.w, cropRect.h);
                 ctx.drawImage(img,
                     cropRect.x / scale, cropRect.y / scale, cropRect.w / scale, cropRect.h / scale,
                     cropRect.x, cropRect.y, cropRect.w, cropRect.h
                 );
-
-                // 枠線
                 ctx.strokeStyle = '#00ff00';
                 ctx.lineWidth = 2;
                 ctx.strokeRect(cropRect.x, cropRect.y, cropRect.w, cropRect.h);
@@ -855,11 +880,7 @@ const ReceiptScanner = ({ onSave, onCancel }) => {
         };
     };
 
-    // 自動トリミング（簡易版：中央付近の色差検出）
     const autoTrim = () => {
-        // ※OpenCV等が使えないため、簡易的に「全体より少し小さく、コントラストがある部分」を探すか、
-        // 実用的には「リセット」機能として動作させ、手動調整を促すのが安全です。
-        // ここでは「画像の80%を中心に配置」するリセットを行います。
         const canvas = canvasRef.current;
         if (canvas) {
             const w = canvas.width;
@@ -868,14 +889,13 @@ const ReceiptScanner = ({ onSave, onCancel }) => {
         }
     };
 
-    // マウスドラッグ操作（矩形描画）
     const handleMouseDown = (e) => {
         const rect = canvasRef.current.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
         setDragStart({ x, y });
         setIsDragging(true);
-        setCropRect({ x, y, w: 0, h: 0 }); // 新しい矩形開始
+        setCropRect({ x, y, w: 0, h: 0 });
     };
 
     const handleMouseMove = (e) => {
@@ -883,10 +903,8 @@ const ReceiptScanner = ({ onSave, onCancel }) => {
         const rect = canvasRef.current.getBoundingClientRect();
         const currentX = e.clientX - rect.left;
         const currentY = e.clientY - rect.top;
-
         const w = currentX - dragStart.x;
         const h = currentY - dragStart.y;
-
         setCropRect({
             x: w > 0 ? dragStart.x : currentX,
             y: h > 0 ? dragStart.y : currentY,
@@ -897,34 +915,24 @@ const ReceiptScanner = ({ onSave, onCancel }) => {
 
     const handleMouseUp = () => {
         setIsDragging(false);
-        // 小さすぎる場合は補正
-        if (cropRect && (cropRect.w < 10 || cropRect.h < 10)) {
-            autoTrim();
-        }
+        if (cropRect && (cropRect.w < 10 || cropRect.h < 10)) autoTrim();
     };
 
     const saveResult = () => {
         if (!cropRect || !canvasRef.current) return;
-
         const canvas = canvasRef.current;
-        const scale = (new Image().src = imageSrc).naturalWidth ? (imageSrc.width / canvas.width) : (canvas.width / 600); // 概算
-
-        // 元画像から切り出し
         const img = new Image();
         img.src = imageSrc;
         img.onload = () => {
             const realScale = img.width / canvas.width;
-
             const outCanvas = document.createElement('canvas');
             outCanvas.width = cropRect.w * realScale;
             outCanvas.height = cropRect.h * realScale;
             const ctx = outCanvas.getContext('2d');
-
             ctx.drawImage(img,
                 cropRect.x * realScale, cropRect.y * realScale, cropRect.w * realScale, cropRect.h * realScale,
                 0, 0, outCanvas.width, outCanvas.height
             );
-
             outCanvas.toBlob((blob) => {
                 const file = new File([blob], `scan_${Date.now()}.jpg`, { type: 'image/jpeg' });
                 onSave(file);
@@ -937,11 +945,12 @@ const ReceiptScanner = ({ onSave, onCancel }) => {
             {mode === 'camera' && (
                 <div>
                     <div style={{ marginBottom: '10px' }}>
+                        {/* ▼ 修正: onChangeでhandleDeviceChangeを呼ぶように変更 */}
                         <SelectControl
-                            label="カメラ選択 (Macの場合はiPhoneを選択可能)"
+                            label="カメラ選択"
                             value={selectedDeviceId}
                             options={devices.map(d => ({ label: d.label || `Camera ${d.deviceId.slice(0, 5)}`, value: d.deviceId }))}
-                            onChange={setSelectedDeviceId}
+                            onChange={handleDeviceChange}
                         />
                     </div>
                     <div style={{ background: '#000', borderRadius: '4px', overflow: 'hidden', textAlign: 'center' }}>
@@ -954,6 +963,7 @@ const ReceiptScanner = ({ onSave, onCancel }) => {
                 </div>
             )}
 
+            {/* ... Crop Mode UI (変更なし) ... */}
             {mode === 'crop' && (
                 <div>
                     <p style={{ fontSize: '0.85rem', color: '#666', marginBottom: '8px' }}>
@@ -970,7 +980,7 @@ const ReceiptScanner = ({ onSave, onCancel }) => {
                         />
                     </div>
                     <div style={{ marginTop: '15px', display: 'flex', justifyContent: 'space-between' }}>
-                        <Button isSecondary onClick={() => setMode('camera')}>再撮影</Button>
+                        <Button isSecondary onClick={() => { setMode('camera'); startStream(selectedDeviceId); }}>再撮影</Button>
                         <div style={{ display: 'flex', gap: '8px' }}>
                             <Button isSecondary onClick={autoTrim}>範囲リセット</Button>
                             <Button isPrimary onClick={saveResult}>保存する</Button>
