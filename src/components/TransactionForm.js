@@ -1,4 +1,4 @@
-import { useState, useEffect } from '@wordpress/element';
+import { useState, useEffect, useRef } from '@wordpress/element';
 import {
     Button,
     TextControl,
@@ -8,7 +8,8 @@ import {
     Notice,
     Card,
     CardBody,
-    CardHeader
+    CardHeader,
+    Modal
 } from '@wordpress/components';
 import apiFetch from '@wordpress/api-fetch';
 import AuditLogViewer from './AuditLogViewer';
@@ -35,6 +36,7 @@ const TransactionForm = ({ onSuccess, initialData = null, onCancel = null, onFil
 
     // File
     const [receiptFile, setReceiptFile] = useState(null);
+    const [isScannerOpen, setIsScannerOpen] = useState(false);
 
     // ▼ 追加: ドラッグ&ドロップ用のState
     const [isDragging, setIsDragging] = useState(false);
@@ -58,6 +60,12 @@ const TransactionForm = ({ onSuccess, initialData = null, onCancel = null, onFil
             setReceiptFile(files[0]);
             e.dataTransfer.clearData();
         }
+    };
+
+    // ▼ 追加: スキャン完了時のハンドラ
+    const handleScanComplete = (file) => {
+        setReceiptFile(file);
+        setIsScannerOpen(false);
     };
 
     const [fee, setFee] = useState(initialData ? initialData.fee : '');
@@ -621,45 +629,70 @@ const TransactionForm = ({ onSuccess, initialData = null, onCancel = null, onFil
 
                             <label style={{ display: 'block', marginBottom: '8px', fontSize: '0.85rem', fontWeight: 600 }}>領収書・請求書 (アップロード)</label>
 
-                            {/* ▼ 修正: ドラッグ&ドロップエリアに変更 */}
-                            <div
-                                onDragOver={handleDragOver}
-                                onDragLeave={handleDragLeave}
-                                onDrop={handleDrop}
-                                onClick={() => document.getElementById('receipt-upload-input').click()}
-                                style={{
-                                    border: isDragging ? '2px dashed #2271b1' : '1px dashed #cbd5e1',
-                                    background: isDragging ? '#f0f9ff' : '#f8fafc',
-                                    borderRadius: '4px',
-                                    padding: '20px',
-                                    textAlign: 'center',
-                                    cursor: 'pointer',
-                                    transition: 'all 0.2s ease'
-                                }}
-                            >
-                                <input
-                                    id="receipt-upload-input"
-                                    type="file"
-                                    accept="image/*,application/pdf"
-                                    onChange={(e) => e.target.files.length > 0 && setReceiptFile(e.target.files[0])}
-                                    style={{ display: 'none' }}
-                                />
+                            {/* ▼ 修正: ドラッグ&ドロップエリア + カメラスキャンボタン */}
+                            <div style={{ display: 'flex', gap: '10px', alignItems: 'stretch' }}>
+                                {/* ドロップエリア */}
+                                <div
+                                    onDragOver={handleDragOver}
+                                    onDragLeave={handleDragLeave}
+                                    onDrop={handleDrop}
+                                    onClick={() => document.getElementById('receipt-upload-input').click()}
+                                    style={{
+                                        flex: 1,
+                                        border: isDragging ? '2px dashed #2271b1' : '1px dashed #cbd5e1',
+                                        background: isDragging ? '#f0f9ff' : '#f8fafc',
+                                        borderRadius: '4px',
+                                        padding: '20px',
+                                        textAlign: 'center',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.2s ease',
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        justifyContent: 'center',
+                                        alignItems: 'center'
+                                    }}
+                                >
+                                    <input
+                                        id="receipt-upload-input"
+                                        type="file"
+                                        accept="image/*,application/pdf"
+                                        onChange={(e) => e.target.files.length > 0 && setReceiptFile(e.target.files[0])}
+                                        style={{ display: 'none' }}
+                                    />
 
-                                {receiptFile ? (
-                                    <div style={{ color: '#2271b1', fontWeight: 'bold' }}>
-                                        <span style={{ marginRight: '5px', fontSize: '1.2em' }}>📄</span>
-                                        {receiptFile.name}
-                                        <span style={{ display: 'block', fontSize: '0.75rem', color: '#666', marginTop: '4px', fontWeight: 'normal' }}>
-                                            (クリックして変更)
-                                        </span>
-                                    </div>
-                                ) : (
-                                    <div style={{ color: '#646970' }}>
-                                        <p style={{ margin: '0 0 5px', fontWeight: 600 }}>クリック または ドラッグ&ドロップ</p>
-                                        <p style={{ margin: 0, fontSize: '0.75rem' }}>PDF, JPG, PNG (領収書など)</p>
-                                    </div>
-                                )}
+                                    {receiptFile ? (
+                                        <div style={{ color: '#2271b1', fontWeight: 'bold' }}>
+                                            <span style={{ marginRight: '5px', fontSize: '1.2em' }}>📄</span>
+                                            {receiptFile.name}
+                                            <span style={{ display: 'block', fontSize: '0.75rem', color: '#666', marginTop: '4px', fontWeight: 'normal' }}>
+                                                (クリックして変更)
+                                            </span>
+                                        </div>
+                                    ) : (
+                                        <div style={{ color: '#646970' }}>
+                                            <p style={{ margin: '0 0 5px', fontWeight: 600 }}>クリック または ドロップ</p>
+                                            <p style={{ margin: 0, fontSize: '0.75rem' }}>PDF, JPG, PNG</p>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* カメラ起動ボタン */}
+                                <Button
+                                    isSecondary
+                                    style={{ height: 'auto', flexDirection: 'column', padding: '0 15px' }}
+                                    onClick={() => setIsScannerOpen(true)}
+                                >
+                                    <span style={{ fontSize: '1.5rem', marginBottom: '4px' }}>📸</span>
+                                    <span style={{ fontSize: '0.75rem' }}>カメラ起動</span>
+                                </Button>
                             </div>
+
+                            {/* ▼ 追加: スキャナーモーダル */}
+                            {isScannerOpen && (
+                                <Modal title="レシートスキャン (撮影・トリミング)" onRequestClose={() => setIsScannerOpen(false)}>
+                                    <ReceiptScanner onSave={handleScanComplete} onCancel={() => setIsScannerOpen(false)} />
+                                </Modal>
+                            )}
                             {initialData && initialData.receipt_path && (
                                 <p style={{ marginTop: '5px', fontSize: '0.8rem' }}>
                                     {(() => {
@@ -706,6 +739,245 @@ const TransactionForm = ({ onSuccess, initialData = null, onCancel = null, onFil
 
                 </div>
             </div>
+        </div>
+    );
+};
+
+// ▼ 新規追加: スキャナーコンポーネント
+const ReceiptScanner = ({ onSave, onCancel }) => {
+    const videoRef = useRef(null);
+    const canvasRef = useRef(null);
+    const [stream, setStream] = useState(null);
+    const [devices, setDevices] = useState([]);
+    const [selectedDeviceId, setSelectedDeviceId] = useState('');
+    const [mode, setMode] = useState('camera'); // 'camera' | 'crop'
+    const [imageSrc, setImageSrc] = useState(null);
+
+    // Crop State
+    const [cropRect, setCropRect] = useState(null); // {x, y, w, h}
+    const [isDragging, setIsDragging] = useState(false);
+    const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+
+    // 1. カメラ初期化
+    useEffect(() => {
+        if (mode === 'camera') {
+            navigator.mediaDevices.enumerateDevices().then(devs => {
+                const videoDevs = devs.filter(d => d.kind === 'videoinput');
+                setDevices(videoDevs);
+                if (videoDevs.length > 0 && !selectedDeviceId) {
+                    setSelectedDeviceId(videoDevs[0].deviceId);
+                }
+            });
+        }
+        return () => stopStream();
+    }, [mode]);
+
+    useEffect(() => {
+        if (mode === 'camera' && selectedDeviceId) {
+            startStream(selectedDeviceId);
+        }
+    }, [selectedDeviceId, mode]);
+
+    const startStream = (deviceId) => {
+        stopStream();
+        navigator.mediaDevices.getUserMedia({
+            video: { deviceId: { exact: deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+        }).then(s => {
+            setStream(s);
+            if (videoRef.current) videoRef.current.srcObject = s;
+        }).catch(err => console.error("Camera Error:", err));
+    };
+
+    const stopStream = () => {
+        if (stream) {
+            stream.getTracks().forEach(track => track.stop());
+            setStream(null);
+        }
+    };
+
+    const captureImage = () => {
+        const video = videoRef.current;
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext('2d').drawImage(video, 0, 0);
+        setImageSrc(canvas.toDataURL('image/jpeg'));
+        setMode('crop');
+        stopStream();
+        // 初期クロップ範囲（全体）
+        setCropRect({ x: 50, y: 50, w: canvas.width - 100, h: canvas.height - 100 });
+    };
+
+    // 2. クロップロジック
+    // 画像がロードされたらCanvasに描画
+    useEffect(() => {
+        if (mode === 'crop' && imageSrc && canvasRef.current) {
+            drawCanvas();
+        }
+    }, [imageSrc, cropRect, mode]);
+
+    const drawCanvas = () => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const img = new Image();
+        img.src = imageSrc;
+        img.onload = () => {
+            canvas.width = 600; // 表示幅固定
+            const scale = 600 / img.width;
+            canvas.height = img.height * scale;
+
+            // 画像描画
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+            // 暗いオーバーレイ
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // クロップエリアのクリア（明るくする）
+            if (cropRect) {
+                // 表示用スケール変換
+                // cropRectは元の画像座標系で管理する想定だが、
+                // 簡易化のためここでは「表示座標系」で管理し、保存時に変換する方がUI実装が楽。
+                // 今回は「表示座標系」でstate管理します。
+
+                ctx.clearRect(cropRect.x, cropRect.y, cropRect.w, cropRect.h);
+                ctx.drawImage(img,
+                    cropRect.x / scale, cropRect.y / scale, cropRect.w / scale, cropRect.h / scale,
+                    cropRect.x, cropRect.y, cropRect.w, cropRect.h
+                );
+
+                // 枠線
+                ctx.strokeStyle = '#00ff00';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(cropRect.x, cropRect.y, cropRect.w, cropRect.h);
+            }
+        };
+    };
+
+    // 自動トリミング（簡易版：中央付近の色差検出）
+    const autoTrim = () => {
+        // ※OpenCV等が使えないため、簡易的に「全体より少し小さく、コントラストがある部分」を探すか、
+        // 実用的には「リセット」機能として動作させ、手動調整を促すのが安全です。
+        // ここでは「画像の80%を中心に配置」するリセットを行います。
+        const canvas = canvasRef.current;
+        if (canvas) {
+            const w = canvas.width;
+            const h = canvas.height;
+            setCropRect({ x: w * 0.1, y: h * 0.1, w: w * 0.8, h: h * 0.8 });
+        }
+    };
+
+    // マウスドラッグ操作（矩形描画）
+    const handleMouseDown = (e) => {
+        const rect = canvasRef.current.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        setDragStart({ x, y });
+        setIsDragging(true);
+        setCropRect({ x, y, w: 0, h: 0 }); // 新しい矩形開始
+    };
+
+    const handleMouseMove = (e) => {
+        if (!isDragging) return;
+        const rect = canvasRef.current.getBoundingClientRect();
+        const currentX = e.clientX - rect.left;
+        const currentY = e.clientY - rect.top;
+
+        const w = currentX - dragStart.x;
+        const h = currentY - dragStart.y;
+
+        setCropRect({
+            x: w > 0 ? dragStart.x : currentX,
+            y: h > 0 ? dragStart.y : currentY,
+            w: Math.abs(w),
+            h: Math.abs(h)
+        });
+    };
+
+    const handleMouseUp = () => {
+        setIsDragging(false);
+        // 小さすぎる場合は補正
+        if (cropRect && (cropRect.w < 10 || cropRect.h < 10)) {
+            autoTrim();
+        }
+    };
+
+    const saveResult = () => {
+        if (!cropRect || !canvasRef.current) return;
+
+        const canvas = canvasRef.current;
+        const scale = (new Image().src = imageSrc).naturalWidth ? (imageSrc.width / canvas.width) : (canvas.width / 600); // 概算
+
+        // 元画像から切り出し
+        const img = new Image();
+        img.src = imageSrc;
+        img.onload = () => {
+            const realScale = img.width / canvas.width;
+
+            const outCanvas = document.createElement('canvas');
+            outCanvas.width = cropRect.w * realScale;
+            outCanvas.height = cropRect.h * realScale;
+            const ctx = outCanvas.getContext('2d');
+
+            ctx.drawImage(img,
+                cropRect.x * realScale, cropRect.y * realScale, cropRect.w * realScale, cropRect.h * realScale,
+                0, 0, outCanvas.width, outCanvas.height
+            );
+
+            outCanvas.toBlob((blob) => {
+                const file = new File([blob], `scan_${Date.now()}.jpg`, { type: 'image/jpeg' });
+                onSave(file);
+            }, 'image/jpeg', 0.9);
+        };
+    };
+
+    return (
+        <div style={{ minWidth: '300px', minHeight: '400px' }}>
+            {mode === 'camera' && (
+                <div>
+                    <div style={{ marginBottom: '10px' }}>
+                        <SelectControl
+                            label="カメラ選択 (Macの場合はiPhoneを選択可能)"
+                            value={selectedDeviceId}
+                            options={devices.map(d => ({ label: d.label || `Camera ${d.deviceId.slice(0, 5)}`, value: d.deviceId }))}
+                            onChange={setSelectedDeviceId}
+                        />
+                    </div>
+                    <div style={{ background: '#000', borderRadius: '4px', overflow: 'hidden', textAlign: 'center' }}>
+                        <video ref={videoRef} autoPlay playsInline style={{ maxWidth: '100%', maxHeight: '400px' }} />
+                    </div>
+                    <div style={{ marginTop: '15px', display: 'flex', justifyContent: 'center', gap: '10px' }}>
+                        <Button isSecondary onClick={onCancel}>キャンセル</Button>
+                        <Button isPrimary onClick={captureImage}>撮影する</Button>
+                    </div>
+                </div>
+            )}
+
+            {mode === 'crop' && (
+                <div>
+                    <p style={{ fontSize: '0.85rem', color: '#666', marginBottom: '8px' }}>
+                        ドラッグして切り抜き範囲を指定してください。
+                    </p>
+                    <div style={{ textAlign: 'center', background: '#333', padding: '10px', overflow: 'auto' }}>
+                        <canvas
+                            ref={canvasRef}
+                            onMouseDown={handleMouseDown}
+                            onMouseMove={handleMouseMove}
+                            onMouseUp={handleMouseUp}
+                            onMouseLeave={handleMouseUp}
+                            style={{ cursor: 'crosshair', maxWidth: '100%' }}
+                        />
+                    </div>
+                    <div style={{ marginTop: '15px', display: 'flex', justifyContent: 'space-between' }}>
+                        <Button isSecondary onClick={() => setMode('camera')}>再撮影</Button>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                            <Button isSecondary onClick={autoTrim}>範囲リセット</Button>
+                            <Button isPrimary onClick={saveResult}>保存する</Button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
