@@ -36,6 +36,30 @@ const TransactionForm = ({ onSuccess, initialData = null, onCancel = null, onFil
     // File
     const [receiptFile, setReceiptFile] = useState(null);
 
+    // ▼ 追加: ドラッグ&ドロップ用のState
+    const [isDragging, setIsDragging] = useState(false);
+
+    // ▼ 追加: ドラッグ&ドロップのイベントハンドラ
+    const handleDragOver = (e) => {
+        e.preventDefault();
+        setIsDragging(true);
+    };
+
+    const handleDragLeave = (e) => {
+        e.preventDefault();
+        setIsDragging(false);
+    };
+
+    const handleDrop = (e) => {
+        e.preventDefault();
+        setIsDragging(false);
+        const files = e.dataTransfer.files;
+        if (files && files.length > 0) {
+            setReceiptFile(files[0]);
+            e.dataTransfer.clearData();
+        }
+    };
+
     const [fee, setFee] = useState(initialData ? initialData.fee : '');
     const [shippingFee, setShippingFee] = useState(initialData ? (initialData.shipping_fee || '') : '');
 
@@ -49,6 +73,9 @@ const TransactionForm = ({ onSuccess, initialData = null, onCancel = null, onFil
     const [addToInventory, setAddToInventory] = useState(false);
     const [inventoryItemName, setInventoryItemName] = useState('');
     const [inventoryQty, setInventoryQty] = useState(1);
+
+    // ▼ 追加: 取引先名の候補リスト用State
+    const [partnerSuggestions, setPartnerSuggestions] = useState([]);
 
     const isEditMode = !!initialData;
 
@@ -87,6 +114,22 @@ const TransactionForm = ({ onSuccess, initialData = null, onCancel = null, onFil
             setCategory(type === 'income' ? '売上高' : '消耗品費');
         }
     }, [type]);
+
+    // ▼ 追加: 過去の取引から取引先名の一覧を取得して候補セットを作成
+    useEffect(() => {
+        apiFetch({ path: '/breeder/v1/transactions' })
+            .then((data) => {
+                if (Array.isArray(data)) {
+                    // 重複を除外してリスト化
+                    const uniquePartners = [...new Set(data
+                        .map(tx => tx.partner_name)
+                        .filter(name => name && name.trim() !== '')
+                    )];
+                    setPartnerSuggestions(uniquePartners);
+                }
+            })
+            .catch(console.error);
+    }, []);
 
     // Fee Auto-Calc Logic
     const handleAmountChange = (val) => {
@@ -527,12 +570,22 @@ const TransactionForm = ({ onSuccess, initialData = null, onCancel = null, onFil
                     <div className="form-card">
                         <div className="form-card-header">取引先・インボイス</div>
                         <div className="form-card-body">
+                            {/* ▼ 修正: list属性を追加し、datalistと連携 */}
                             <TextControl
                                 label="取引先名"
                                 value={partnerName}
                                 onChange={setPartnerName}
                                 placeholder="Amazon, 東電, 〇〇商店..."
+                                list="partner-name-suggestions" // リストIDを指定
+                                autoComplete="off"
                             />
+                            {/* ▼ 追加: 候補リストの定義 */}
+                            <datalist id="partner-name-suggestions">
+                                {partnerSuggestions.map((name, index) => (
+                                    <option key={index} value={name} />
+                                ))}
+                            </datalist>
+
                             <div className="form-row-2">
                                 <TextControl
                                     label="インボイス番号"
@@ -567,12 +620,46 @@ const TransactionForm = ({ onSuccess, initialData = null, onCancel = null, onFil
                             <hr style={{ margin: '15px 0', border: '0', borderTop: '1px solid #eee' }} />
 
                             <label style={{ display: 'block', marginBottom: '8px', fontSize: '0.85rem', fontWeight: 600 }}>領収書・請求書 (アップロード)</label>
-                            <input
-                                type="file"
-                                accept="image/*,application/pdf"
-                                onChange={(e) => setReceiptFile(e.target.files[0])}
-                                style={{ width: '100%', padding: '8px', background: '#f8fafc', border: '1px dashed #cbd5e1', borderRadius: '4px' }}
-                            />
+
+                            {/* ▼ 修正: ドラッグ&ドロップエリアに変更 */}
+                            <div
+                                onDragOver={handleDragOver}
+                                onDragLeave={handleDragLeave}
+                                onDrop={handleDrop}
+                                onClick={() => document.getElementById('receipt-upload-input').click()}
+                                style={{
+                                    border: isDragging ? '2px dashed #2271b1' : '1px dashed #cbd5e1',
+                                    background: isDragging ? '#f0f9ff' : '#f8fafc',
+                                    borderRadius: '4px',
+                                    padding: '20px',
+                                    textAlign: 'center',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s ease'
+                                }}
+                            >
+                                <input
+                                    id="receipt-upload-input"
+                                    type="file"
+                                    accept="image/*,application/pdf"
+                                    onChange={(e) => e.target.files.length > 0 && setReceiptFile(e.target.files[0])}
+                                    style={{ display: 'none' }}
+                                />
+
+                                {receiptFile ? (
+                                    <div style={{ color: '#2271b1', fontWeight: 'bold' }}>
+                                        <span style={{ marginRight: '5px', fontSize: '1.2em' }}>📄</span>
+                                        {receiptFile.name}
+                                        <span style={{ display: 'block', fontSize: '0.75rem', color: '#666', marginTop: '4px', fontWeight: 'normal' }}>
+                                            (クリックして変更)
+                                        </span>
+                                    </div>
+                                ) : (
+                                    <div style={{ color: '#646970' }}>
+                                        <p style={{ margin: '0 0 5px', fontWeight: 600 }}>クリック または ドラッグ&ドロップ</p>
+                                        <p style={{ margin: 0, fontSize: '0.75rem' }}>PDF, JPG, PNG (領収書など)</p>
+                                    </div>
+                                )}
+                            </div>
                             {initialData && initialData.receipt_path && (
                                 <p style={{ marginTop: '5px', fontSize: '0.8rem' }}>
                                     {(() => {
